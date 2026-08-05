@@ -1,0 +1,39 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Environment variables
+.env
+.env.local
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Generated output and reports
+reports_output/
+*.log
+
+# MCP specific or local caches
+mcp_servers/**/.venv/
+mcp_servers/**/__pycache__/
+
+# Manual verification scripts
+backend/query_results.py
+backend/verify.py
+backend/extract_pdf.py
+timing.py
+
+# Temporary test cases and agent verifications
+**/test_*.py
+**/verify_*.py
