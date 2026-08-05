@@ -37,3 +37,9 @@ timing.py
 # Temporary test cases and agent verifications
 **/test_*.py
 **/verify_*.py
+
+# Runtime uploads (Phase 2 API layer)
+storage/uploads/
+
+# Agent scratchpad / temporary audit scripts
+scratch/

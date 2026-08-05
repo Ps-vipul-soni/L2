@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<IPC-1752A>
+  <Product name="Smartphone X1">
+    <SubAssembly name="Display Module">
+      <Material name="Cover Glass">
+        <Substance name="Silicon Dioxide" cas="7631-86-9" concentration="99.0" unit="%"/>
+        <Substance name="Aluminum Oxide" cas="1344-28-1" concentration="1.0" unit="%"/>
+      </Material>
+    </SubAssembly>
+    <SubAssembly name="Power Supply">
+      <Material name="Solder Paste">
+        <Substance name="Tin" cas="7440-31-5" concentration="65.0" unit="%"/>
+        <Substance name="Lead" cas="7439-92-1" concentration="35.0" unit="%"/>
+      </Material>
+      <Material name="Wiring">
+        <Substance name="Copper" cas="7440-50-8" concentration="100.0" unit="%"/>
+      </Material>
+    </SubAssembly>
+  </Product>
+</IPC-1752A>

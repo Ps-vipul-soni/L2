@@ -5,3 +5,6 @@ pydantic
 python-dotenv
 asyncpg
 mcp
+pandas
+openpyxl
+lxml

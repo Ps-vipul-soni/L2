@@ -26,24 +26,22 @@ async def chemical_normalization_node(state: Dict[str, Any]) -> Dict[str, Any]:
         
     db_pool: asyncpg.Pool = state["db_pool"]
     mcp_client_a = state["mcp_client_a"]
-    pdf_path = state["pdf_path"]
+    document_path = state["document_path"]
     product_id = state["product_id"]
     
-    # 1. Insert Document
-    filename = os.path.basename(pdf_path)
+    document_id = state["document_id"]
+    
+    # 1. Update Document with extraction metadata
     async with db_pool.acquire() as conn:
-        document_id = str(await conn.fetchval(
+        await conn.execute(
             """
-            INSERT INTO documents (product_id, doc_type, filename, file_path, extraction_confidence)
-            VALUES ($1, $2, $3, $4, $5)
-            RETURNING id
+            UPDATE documents 
+            SET extraction_confidence = $1 
+            WHERE id = $2
             """,
-            product_id,
-            extraction_result["doc_type"],
-            filename,
-            pdf_path,
-            extraction_result["extraction_confidence"]
-        ))
+            extraction_result["extraction_confidence"],
+            document_id
+        )
     
     normalized_components = []
     
