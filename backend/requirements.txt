@@ -3,3 +3,5 @@ langchain-google-genai
 langgraph
 pydantic
 python-dotenv
+asyncpg
+mcp
