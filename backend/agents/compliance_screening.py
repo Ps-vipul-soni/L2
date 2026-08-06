@@ -78,6 +78,7 @@ async def compliance_screening_node(state: Dict[str, Any]) -> Dict[str, Any]:
                     threshold_val = float(threshold_val_raw) if threshold_val_raw is not None else None
                     exemption_notes = threshold_data.get("exemption_notes")
                     confidence = 1.0
+                    reasoning = "No specific regulatory restrictions apply to this substance under the evaluated regulation."
                     
                     if threshold_data.get("status") == "not_found" or threshold_val is None:
                         status = "ALLOWED"
