@@ -48,3 +48,4 @@ storage/uploads/
 
 # Agent scratchpad / temporary audit scripts
 scratch/
+*_audit.md

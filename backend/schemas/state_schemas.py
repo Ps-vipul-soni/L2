@@ -114,7 +114,7 @@ class ScreeningResult(BaseModel):
     component_name: str
     ingredient_cas_number: Optional[str]
     ingredient_canonical_name: str
-    regulation_code: Literal["RoHS", "REACH_SVHC"]
+    regulation_code: str
     status: ScreeningStatus
     measured_value: Optional[float] = None
     threshold_value: Optional[float] = None

@@ -10,6 +10,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')
 
 from backend.agents.document_understanding import document_understanding_node
 from backend.agents.tool_nodes.chemical_normalization import chemical_normalization_node
+from backend.agents.regulation_planning import regulation_planning_node
 from backend.agents.compliance_screening import compliance_screening_node
 from backend.agents.risk_and_decision import risk_and_decision_node
 from backend.agents.report_generation import report_generation_node
@@ -26,6 +27,7 @@ class PipelineState(TypedDict):
     
     # Intermediate state tracking (Pydantic models converted to dicts for state passing)
     document_id: str
+    applicable_regulations: Optional[list[Dict[str, str]]]
     compliance_decision_id: Optional[str]
     extraction_result: Optional[Dict[str, Any]]
     normalization_result: Optional[Dict[str, Any]]
@@ -53,6 +55,7 @@ def build_pipeline_graph() -> StateGraph:
     # Add nodes
     graph.add_node("document_understanding", document_understanding_node)
     graph.add_node("chemical_normalization", chemical_normalization_node)
+    graph.add_node("regulation_planning", regulation_planning_node)
     graph.add_node("compliance_screening", compliance_screening_node)
     graph.add_node("risk_and_decision", risk_and_decision_node)
     graph.add_node("report_generation", report_generation_node)
@@ -61,7 +64,8 @@ def build_pipeline_graph() -> StateGraph:
     # Wire edges
     graph.set_entry_point("document_understanding")
     graph.add_edge("document_understanding", "chemical_normalization")
-    graph.add_edge("chemical_normalization", "compliance_screening")
+    graph.add_edge("chemical_normalization", "regulation_planning")
+    graph.add_edge("regulation_planning", "compliance_screening")
     
     # Conditional edge after screening
     graph.add_conditional_edges(

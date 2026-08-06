@@ -33,7 +33,9 @@ async def compliance_screening_node(state: Dict[str, Any]) -> Dict[str, Any]:
     structured_llm = llm.with_structured_output(LLMReasoning)
     
     screening_results_list = []
-    regulations_to_check = ["RoHS", "REACH_SVHC"]
+    applicable_regulations = state.get("applicable_regulations", [])
+    # Extract just the codes from the state dicts
+    regulations_to_check = [r["code"] for r in applicable_regulations] if applicable_regulations else []
     
     async with db_pool.acquire() as conn:
         for comp in normalization_result.get("components", []):
