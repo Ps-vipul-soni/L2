@@ -81,6 +81,10 @@ async def compliance_screening_node(state: Dict[str, Any]) -> Dict[str, Any]:
                     
                     if threshold_data.get("status") == "not_found" or threshold_val is None:
                         status = "ALLOWED"
+                    elif reg_code == "PROP_65":
+                        status = "NEEDS_REVIEW"
+                        confidence = 0.9
+                        reasoning = "Prop 65 is exposure-based (MADL/NSRL). Concentration thresholds alone cannot determine compliance. The stored threshold is a schema-compatibility placeholder; manual exposure assessment is required."
                     else:
                         # Deterministic Python comparison
                         if measured_val is not None and measured_val > threshold_val:
@@ -96,8 +100,9 @@ async def compliance_screening_node(state: Dict[str, Any]) -> Dict[str, Any]:
                             status = "NEEDS_REVIEW"
                             confidence = 0.5
                             
-                    # Ask LLM for reasoning only
-                    prompt = f"""
+                    # Ask LLM for reasoning only if not already set (e.g. bypass for PROP_65)
+                    if reg_code != "PROP_65":
+                        prompt = f"""
 You are a compliance reasoning engine. I have evaluated an ingredient against a regulation.
 Ingredient: {canonical_name} (CAS: {cas_number})
 Measured: {measured_val}
@@ -109,8 +114,8 @@ Assigned Status: {status}
 Provide a short, professional explainability sentence summarizing why this status was assigned.
 Do not change the status. Just explain it.
 """
-                    llm_res = structured_llm.invoke(prompt)
-                    reasoning = llm_res.reasoning
+                        llm_res = structured_llm.invoke(prompt)
+                        reasoning = llm_res.reasoning
                     
                     # Construct ScreeningResult
                     sr = ScreeningResult(
