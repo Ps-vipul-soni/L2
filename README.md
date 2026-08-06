@@ -39,30 +39,48 @@ The evaluation logic is driven by a LangGraph multi-agent state machine, prevent
 
 ## Architecture
 ```text
-                       ┌────────────────────┐
-   PDF Upload ───────► │   LangGraph AI     │
-                       │   Orchestrator     │
-                       └─────────┬──────────┘
-                                 │
-                 ┌───────────────┴───────────────┐
-                 ▼                               ▼
-        ┌────────────────┐               ┌───────────────┐
-        │  Human Review  │               │  PubChem API  │
-        │    Queue       │               │ (via MCP)     │
-        └────────┬───────┘               └───────┬───────┘
-                 │                               │
-                 └───────────────┬───────────────┘
-                                 ▼
-                     ┌───────────────────────┐
-                     │   PostgreSQL (SoR)    │
-                     │  (schema_v1_draft)    │
-                     └───────────┬───────────┘
-                                 │ (load_graph.py)
-                                 ▼
-                     ┌───────────────────────┐
-                     │    Neo4j AuraDB       │
-                     │  (Graph Analytics)    │
-                     └───────────────────────┘
+                                ┌─────────────────────────┐
+                                │   Streamlit Frontend    │
+                                │   (User UI & Polling)   │
+                                └───────────┬─────────────┘
+                                            │ REST API
+                                ┌───────────▼─────────────┐
+                                │     FastAPI Backend     │
+                                └───────────┬─────────────┘
+                                            │
+    ┌───────────────────────────────────────▼───────────────────────────────────────┐
+    │                         LANGGRAPH AI ORCHESTRATOR                             │
+    │                                                                               │
+    │  ┌─────────────────┐       ┌─────────────────┐       ┌─────────────────┐      │
+    │  │ Doc Extractor   │ ────► │ Reg Planner     │ ────► │ Comp. Screener  │      │
+    │  │ (Gemini Pro)    │       │ (Gemini Flash)  │       │ (Gemini Pro)    │      │
+    │  └──────┬──────────┘       └──────┬──────────┘       └───────┬─────────┘      │
+    │         │                         │                          │                │
+    │         │ (Low Confidence)        │                          │                │
+    │  ┌──────▼──────────┐              │                          │                │
+    │  │ Review Queue    │              │                          │                │
+    │  │ (Human in loop) │              │                          │                │
+    │  └─────────────────┘              │                          │                │
+    └───────────────────────────────────┼──────────────────────────┼────────────────┘
+               │                        │                          │
+               │ (Resolves CAS)         │ (Target Geographies)     │ (Save Results)
+       ┌───────▼───────┐                │                          │
+       │  MCP Client   │ ───────────────┼──────────────────────────┤
+       │ (PubChem API) │                │                          │
+       └───────────────┘                │                          │
+                                        ▼                          ▼
+                               ┌─────────────────────────────────────────┐
+                               │       PostgreSQL (System of Record)     │
+                               │   (Products, Components, Ingredients)   │
+                               └────────────────┬────────────────────────┘
+                                                │
+                                                │ load_graph.py (asyncpg + neo4j)
+                                                │ Idempotent Graph Sync (MERGE)
+                                                ▼
+                               ┌─────────────────────────────────────────┐
+                               │     Neo4j AuraDB (Read-Side Graph)      │
+                               │  (Supplier Risk & Exposure Analytics)   │
+                               └─────────────────────────────────────────┘
 ```
 
 ## Prerequisites
