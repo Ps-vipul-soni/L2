@@ -54,6 +54,7 @@ CREATE TABLE products (
     sku             TEXT UNIQUE,
     product_type    TEXT,           -- e.g. 'electronics', 'cosmetics' — drives Regulation Planning
     customer_name   TEXT,           -- for customer-specific RSLs (Phase 3)
+    market_country  TEXT,           -- Added in Phase 3 for jurisdiction filtering
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -135,7 +136,8 @@ CREATE TABLE regulations (
     code            TEXT UNIQUE NOT NULL,   -- 'RoHS', 'REACH_SVHC', etc.
     name            TEXT NOT NULL,
     jurisdiction    TEXT,                   -- 'EU', 'US-CA', 'Global'
-    applies_to_product_types TEXT[]         -- e.g. ARRAY['electronics'] — used by Regulation Planning (Phase 3)
+    applies_to_product_types TEXT[],        -- e.g. ARRAY['electronics'] — used by Regulation Planning (Phase 3)
+    customer_name   TEXT                    -- Added in Phase 3 for customer-specific RSLs
 );
 
 -- ---------- Regulation thresholds (versioned) ----------

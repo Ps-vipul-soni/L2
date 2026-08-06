@@ -20,6 +20,11 @@ env/
 *.swo
 .DS_Store
 
+# Testing and typing caches
+.pytest_cache/
+.mypy_cache/
+.coverage
+
 # Generated output and reports
 reports_output/
 *.log
