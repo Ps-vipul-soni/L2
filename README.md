@@ -98,7 +98,13 @@ cd <repository-directory>
 ```
 
 ### 2. Configure environment variables
-Create a `.env` file in the root directory:
+Copy the example env file and fill in your credentials:
+```bash
+cp .env.example .env
+```
+*(On Windows PowerShell, use: `Copy-Item .env.example .env`)*
+
+Update the `.env` file with your actual keys:
 ```bash
 GEMINI_API_KEY=your_google_gemini_key_here
 DATABASE_URL=postgresql://user:password@localhost:5432/dbname
