@@ -33,7 +33,7 @@ The evaluation logic is driven by a LangGraph multi-agent state machine, prevent
 | Backend API | FastAPI |
 | AI Orchestration | LangGraph |
 | LLMs | Google Gemini 3.1 Flash Lite |
-| External Tooling | PubChem MCP Client |
+| External Tooling | PubChem MCP & Regulation Lookup MCP Server |
 | Transactional DB | PostgreSQL + asyncpg |
 | Graph Database | Neo4j AuraDB |
 
@@ -63,11 +63,13 @@ The evaluation logic is driven by a LangGraph multi-agent state machine, prevent
     │  └─────────────────┘              │                          │                │
     └───────────────────────────────────┼──────────────────────────┼────────────────┘
                │                        │                          │
-               │ (Resolves CAS)         │ (Target Geographies)     │ (Save Results)
-       ┌───────▼───────┐                │                          │
-       │  MCP Client   │ ───────────────┼──────────────────────────┤
-       │ (PubChem API) │                │                          │
-       └───────────────┘                │                          │
+               │ (Resolves CAS)         │ (Query Reg Rules)        │ (Save Results)
+       ┌───────▼───────┐        ┌───────▼───────┐                  │
+       │  MCP Server   │        │  MCP Server   │                  │
+       │ (PubChem API) │        │ (Reg. Lookup) │                  │
+       └───────────────┘        └───────┬───────┘                  │
+                                        │                          │
+                                        │ (Target Geographies)     │
                                         ▼                          ▼
                                ┌─────────────────────────────────────────┐
                                │       PostgreSQL (System of Record)     │
