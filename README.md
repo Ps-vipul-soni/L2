@@ -32,7 +32,7 @@ The evaluation logic is driven by a LangGraph multi-agent state machine, prevent
 | Frontend | Streamlit |
 | Backend API | FastAPI |
 | AI Orchestration | LangGraph |
-| LLMs | Google Gemini 3.5 Pro & 3.1 Flash |
+| LLMs | Google Gemini 3.1 Flash Lite |
 | External Tooling | PubChem MCP Client |
 | Transactional DB | PostgreSQL + asyncpg |
 | Graph Database | Neo4j AuraDB |
@@ -53,7 +53,7 @@ The evaluation logic is driven by a LangGraph multi-agent state machine, prevent
     │                                                                               │
     │  ┌─────────────────┐       ┌─────────────────┐       ┌─────────────────┐      │
     │  │ Doc Extractor   │ ────► │ Reg Planner     │ ────► │ Comp. Screener  │      │
-    │  │ (Gemini Pro)    │       │ (Gemini Flash)  │       │ (Gemini Pro)    │      │
+    │  │ (3.1 Flash Lite)│       │ (3.1 Flash Lite)│       │ (3.1 Flash Lite)│      │
     │  └──────┬──────────┘       └──────┬──────────┘       └───────┬─────────┘      │
     │         │                         │                          │                │
     │         │ (Low Confidence)        │                          │                │
