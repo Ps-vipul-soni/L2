@@ -109,7 +109,8 @@ CREATE TABLE documents (
     file_path       TEXT NOT NULL,
     uploaded_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    extraction_confidence NUMERIC(4,3)   -- 0.000–1.000, drives Phase 2 human-review routing
+    extraction_confidence NUMERIC(4,3),  -- 0.000–1.000, drives Phase 2 human-review routing
+    extraction_notes TEXT                -- Optional notes from Document Understanding (Task 6)
     -- No workflow_run_id here by design: documents are reusable across runs
     -- (a document may be rescreened when regulation lists update). If
     -- per-run document usage needs tracking later, add a
@@ -210,5 +211,10 @@ CREATE TABLE review_queue (
     screening_result_id UUID REFERENCES screening_results(id),
     reason          TEXT NOT NULL,           -- e.g. 'low extraction confidence', 'ambiguous exemption'
     status          TEXT NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN','RESOLVED','DISMISSED')),
-    resolved_at     TIMESTAMPTZ
+    resolved_at     TIMESTAMPTZ,
+    -- This column was added in Review Queue V2.
+    -- It tracks review queue creation time going forward.
+    -- Existing rows are backfilled with the migration execution time.
+    -- Therefore existing rows do NOT have historically accurate creation timestamps.
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );

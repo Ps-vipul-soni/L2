@@ -50,3 +50,13 @@ storage/uploads/
 scratch/
 *_audit.md
 seed_*.py
+
+# Test and temporary artifacts
+*.pdf
+*.csv
+*.png
+*.jpg
+*.jpeg
+*.md
+!README.md
+!docs/
