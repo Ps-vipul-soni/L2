@@ -14,34 +14,33 @@
 ## Overview
 Managing supply chain compliance is traditionally a highly manual, error-prone process. Reviewing Safety Data Sheets (SDS) against hundreds of changing regulations takes hours per document. This project completely automates this process using a **CQRS (Command Query Responsibility Segregation) Architecture**:
 
-- **System of Record (PostgreSQL):** Transactional storage for documents, extraction results, and human-in-the-loop review queues.
-- **Read-Side Analytics (Neo4j):** Deterministic supply chain tracing to identify exactly which Tier-1 suppliers are exposing the product portfolio to restricted chemicals.
+- **System of Record (PostgreSQL):** Transactional storage for products, documents, extracted chemical components, and human-in-the-loop review queues.
+- **Read-Side Analytics (Neo4j):** Deterministic supply chain tracing to identify exactly which Tier-1 suppliers are exposing the product portfolio to restricted chemicals, mapped as a graph.
 
-The evaluation logic is driven by a LangGraph multi-agent state machine, preventing hallucinations through external tool-calling and strict programmatic thresholds.
+The evaluation logic is driven by a **LangGraph multi-agent state machine**, preventing hallucinations through external tool-calling and strict programmatic thresholds.
 
 ## Key Features
-- **Multi-Agent Orchestration (LangGraph):** Dedicated AI agents for Document Extraction, Regulation Planning, and Compliance Screening.
-- **Dynamic Conditional Routing:** Automatically routes low-confidence extractions or subjective regulatory rules (like California Prop 65 exposure limits) to a Human-in-the-Loop Review Queue.
-- **External API Tool-Calling:** Integrates with the NIH PubChem API via MCP (Model Context Protocol) to definitively resolve chemical names to standardized CAS numbers—eliminating AI hallucination.
-- **Idempotent Graph Synchronization:** A robust pipeline (`load_graph.py`) to flawlessly synchronize relational data into a Neo4j AuraDB graph topology without duplication.
-- **Complex Regulatory Logic:** Differentiates between strict concentration thresholds (RoHS/REACH) and additive customer-specific Restricted Substance Lists (RSLs).
+- **Multi-Agent Orchestration (LangGraph):** Dedicated AI agents for Document Extraction, Chemical Normalization, Regulation Planning, and Compliance Screening.
+- **Dynamic Conditional Routing:** Automatically routes low-confidence extractions or messy PDF parsing to a Human-in-the-Loop Review Queue.
+- **External API Tool-Calling:** Integrates with the NIH PubChem API and local Regulatory databases via **MCP (Model Context Protocol)** servers to definitively resolve chemical names to standardized CAS numbers—eliminating AI hallucination.
+- **8-Page Streamlit UI:** A fully featured frontend encompassing Dashboards, Product Screening, Supplier Risk Analytics, Compliance Reporting, and Queue Management.
 
 ## Tech Stack
 | Layer | Technology |
 |---|---|
-| Frontend | Streamlit |
-| Backend API | FastAPI |
-| AI Orchestration | LangGraph |
-| LLMs | Google Gemini 3.1 Flash Lite |
-| External Tooling | PubChem MCP & Regulation Lookup MCP Server |
-| Transactional DB | PostgreSQL + asyncpg |
-| Graph Database | Neo4j AuraDB |
+| **Frontend** | Streamlit (Multi-page App) |
+| **Backend API** | FastAPI |
+| **AI Orchestration** | LangGraph |
+| **LLMs** | Google Gemini 3.1 Flash Lite |
+| **External Tooling** | `chemical_identity_mcp` & `regulation_lookup_mcp` |
+| **Transactional DB** | PostgreSQL + asyncpg |
+| **Graph Database** | Neo4j AuraDB |
 
 ## Architecture
 ```text
                                 ┌─────────────────────────┐
                                 │   Streamlit Frontend    │
-                                │   (User UI & Polling)   │
+                                │   (8-Page UI & Polling) │
                                 └───────────┬─────────────┘
                                             │ REST API
                                 ┌───────────▼─────────────┐
@@ -69,15 +68,12 @@ The evaluation logic is driven by a LangGraph multi-agent state machine, prevent
        │ (PubChem API) │        │ (Reg. Lookup) │                  │
        └───────────────┘        └───────┬───────┘                  │
                                         │                          │
-                                        │ (Target Geographies)     │
                                         ▼                          ▼
                                ┌─────────────────────────────────────────┐
                                │       PostgreSQL (System of Record)     │
                                │   (Products, Components, Ingredients)   │
                                └────────────────┬────────────────────────┘
-                                                │
-                                                │ load_graph.py (asyncpg + neo4j)
-                                                │ Idempotent Graph Sync (MERGE)
+                                                │ (Dual-Write / Sync)
                                                 ▼
                                ┌─────────────────────────────────────────┐
                                │     Neo4j AuraDB (Read-Side Graph)      │
@@ -100,13 +96,7 @@ cd <repository-directory>
 ```
 
 ### 2. Configure environment variables
-Copy the example env file and fill in your credentials:
-```bash
-cp .env.example .env
-```
-*(On Windows PowerShell, use: `Copy-Item .env.example .env`)*
-
-Update the `.env` file with your actual keys:
+Create a `.env` file in the root of the project with your actual keys:
 ```bash
 GEMINI_API_KEY=your_google_gemini_key_here
 DATABASE_URL=postgresql://user:password@localhost:5432/dbname
@@ -115,7 +105,8 @@ NEO4J_USERNAME=neo4j
 NEO4J_PASSWORD=your_neo4j_password_here
 ```
 
-### 3. Install dependencies
+### 3. Start the Backend API
+Open a terminal in the project root:
 ```bash
 cd backend
 python -m venv .venv
@@ -125,43 +116,45 @@ python -m venv .venv
 source .venv/bin/activate
 
 pip install -r requirements.txt
-```
-
-### 4. Start the backend (FastAPI)
-```bash
-cd backend
-uvicorn main:app --reload --port 8000
+uvicorn backend.main:app --host 127.0.0.1 --port 8000
 ```
 The API will be available at `http://localhost:8000`.
 
-### 5. Start the frontend (Streamlit)
-In a second terminal:
+### 4. Start the Frontend UI
+Open a **second terminal** in the project root:
 ```bash
 cd frontend
 python -m venv .venv
+# Windows
 .\.venv\Scripts\activate
-pip install -r requirements.txt
+# macOS/Linux
+source .venv/bin/activate
 
-streamlit run app.py
+pip install -r requirements.txt
+streamlit run frontend/streamlit_app.py
 ```
-The app opens automatically at `http://localhost:8501`.
+The UI opens automatically at `http://localhost:8501`.
 
 ## Project Structure
 ```text
 project_root/
 ├── backend/
-│   ├── agents/          # LangGraph state machine and AI agents
-│   ├── graph_db/        # Neo4j integration and sync scripts
-│   ├── database/        # PostgreSQL schema (schema_v1_draft.sql)
-│   ├── main.py          # FastAPI application
+│   ├── agents/          # LangGraph state machine, nodes, and parsers
+│   ├── api/             # FastAPI routers (dashboard, pipeline, products, etc.)
+│   ├── graph/           # LangGraph configuration (pipeline_graph.py)
+│   ├── utils/           # Database drivers and matching utilities
+│   ├── main.py          # FastAPI application entrypoint
 │   └── requirements.txt
 ├── frontend/
-│   ├── app.py           # Streamlit UI
+│   ├── pages/           # 8-page Streamlit UI routing
+│   ├── streamlit_app.py # Streamlit entrypoint
 │   └── requirements.txt
-├── scratch/             # Analytical scripts (e.g. supplier_risk.py)
-├── .env                 # Environment credentials (Git-ignored)
-├── .gitignore
-└── README.md
+├── mcp_servers/         # Model Context Protocol servers
+│   ├── chemical_identity_mcp/
+│   └── regulation_lookup_mcp/
+├── .env                 # Environment credentials
+├── README.md
+└── good_sds.pdf         # Sample document for testing
 ```
 
 ## Disclaimer
