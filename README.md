@@ -35,25 +35,21 @@ The evaluation logic is driven by a **LangGraph multi-agent state machine**, whi
 
 ## 🤖 Multi-Agent System (LangGraph)
 
-The pipeline uses a coordinated team of AI agents, each strictly scoped to a specific compliance phase:
-
-1. **Document Understanding Agent:** Extracts complex hierarchical Bill of Materials (BOM) and Full Material Declaration (FMD) data from raw supplier PDFs/CSVs. It intelligently aggregates multi-document submissions into a single cohesive product graph.
-2. **Regulation Planning Agent:** Determines exactly which regulations apply to the product based on its target jurisdiction (e.g., California Prop 65, EU RoHS) and product type, dramatically reducing unnecessary screening overhead.
-3. **Compliance Screening Agent:** The core evaluation engine. It batches LLM prompts to analyze the extracted ingredients against the planned regulations, validating constraints safely beneath Gemini's rate limits while remaining 100% deterministic.
-4. **Risk & Decision Agent:** Synthesizes the screening results to calculate an overall product compliance status (PASS, FAIL, WARNING) and identifies critical supply-chain vulnerabilities.
-5. **Review Routing Agent (Human-in-the-Loop):** Acts as a safety valve. If the Document Understanding agent expresses low confidence (e.g., due to a blurry PDF), this agent halts the automated pipeline and routes the document to a UI Review Queue for human validation.
-6. **Report Generation Agent:** Drafts an executive summary of the compliance outcome tailored for stakeholders.
+- **Document Understanding Agent:** Extracts raw data from supply chain documents (BOMs/FMDs).
+- **Regulation Planning Agent:** Determines which regulations apply to a specific product.
+- **Compliance Screening Agent:** Analyzes ingredients against regulations to determine compliance.
+- **Risk & Decision Agent:** Calculates the overall product compliance status (PASS/FAIL/WARNING).
+- **Review Routing Agent:** Routes low-confidence extractions to a human review queue.
+- **Report Generation Agent:** Drafts an executive compliance summary for stakeholders.
 
 ---
 
 ## 🔌 MCP Servers (Model Context Protocol)
 
-To eliminate AI hallucinations, the agents are not permitted to "guess" chemical facts or regulatory limits. Instead, they are equipped with two distinct **MCP (Model Context Protocol)** servers that provide standardized tool-calling interfaces:
+To eliminate AI hallucinations, agents query external facts via MCP servers:
 
-- **Agent A (Chemical Identity MCP):** A specialized server that connects to the **NIH PubChem API**. Whenever the Document Understanding agent reads a chemical name like "Lead" or "H2O", it calls this MCP server to definitively resolve the name to its canonical CAS Registry Number and known synonyms.
-- **Agent B (Regulation Lookup MCP):** A specialized server that holds the deterministic truth regarding compliance thresholds. The Compliance Screening agent uses this server to query the exact permitted parts-per-million (PPM) for a chemical under a specific regulation. 
-
-By offloading factual lookups to MCP servers, the LLMs are restricted solely to text-extraction and logical reasoning, guaranteeing regulatory accuracy.
+- **Chemical Identity MCP (Agent A):** Connects to the NIH PubChem API to definitively resolve chemical names to standardized CAS numbers.
+- **Regulation Lookup MCP (Agent B):** Provides deterministic truth on regulatory thresholds (e.g., maximum permitted parts-per-million).
 
 ---
 
