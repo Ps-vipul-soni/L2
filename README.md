@@ -13,11 +13,11 @@
 
 ## 📑 Table of Contents
 - [Overview](#-overview)
-- [Key Features](#-key-features)
+- [Multi-Agent System (LangGraph)](#-multi-agent-system-langgraph)
+- [MCP Servers (Model Context Protocol)](#-mcp-servers-model-context-protocol)
 - [Architecture](#-architecture)
 - [Technology Stack](#-technology-stack)
 - [Quickstart Guide](#-quickstart-guide)
-- [Project Structure](#-project-structure)
 - [Disclaimer](#-disclaimer)
 
 ---
@@ -29,18 +29,31 @@ Managing supply chain compliance is traditionally a highly manual, error-prone p
 - **System of Record (PostgreSQL):** Transactional storage for products, documents, extracted chemical components, screening results, and human-in-the-loop review queues.
 - **Read-Side Analytics (Neo4j):** Deterministic supply chain tracing to identify exactly which Tier-1 suppliers are exposing the product portfolio to restricted chemicals, mapped as a graph.
 
-The evaluation logic is driven by a **LangGraph multi-agent state machine**, which prevents LLM hallucinations through explicit tool-calling, strict programmatic thresholds, and batched contextual reasoning.
+The evaluation logic is driven by a **LangGraph multi-agent state machine**, which prevents LLM hallucinations through explicit tool-calling via MCP, strict programmatic thresholds, and batched contextual reasoning.
 
 ---
 
-## ✨ Key Features
+## 🤖 Multi-Agent System (LangGraph)
 
-- **Multi-Agent Orchestration (LangGraph):** Dedicated AI agents handle Document Extraction, Chemical Normalization, Regulation Planning, and Compliance Screening in an automated DAG.
-- **Multi-Document Aggregation:** Synthesizes ingredients across multiple concurrent supplier documents into a single portfolio screening run.
-- **Batched LLM Explanability:** Implements intelligent prompt-batching to provide human-readable compliance reasoning while staying efficiently under API rate limits.
-- **Dynamic Conditional Routing:** Automatically routes low-confidence extractions or messy PDF parsing to a Human-in-the-Loop Review Queue rather than forcing an unsafe automated decision.
-- **External API Tool-Calling (MCP):** Integrates with the NIH PubChem API and local Regulatory databases via **Model Context Protocol (MCP)** servers to definitively resolve chemical names to standardized CAS numbers—eliminating AI hallucination.
-- **Comprehensive UI:** An 8-page Streamlit frontend encompassing Dashboards, Product Screening, Supplier Risk Analytics, Compliance Reporting, and Queue Management.
+The pipeline uses a coordinated team of AI agents, each strictly scoped to a specific compliance phase:
+
+1. **Document Understanding Agent:** Extracts complex hierarchical Bill of Materials (BOM) and Full Material Declaration (FMD) data from raw supplier PDFs/CSVs. It intelligently aggregates multi-document submissions into a single cohesive product graph.
+2. **Regulation Planning Agent:** Determines exactly which regulations apply to the product based on its target jurisdiction (e.g., California Prop 65, EU RoHS) and product type, dramatically reducing unnecessary screening overhead.
+3. **Compliance Screening Agent:** The core evaluation engine. It batches LLM prompts to analyze the extracted ingredients against the planned regulations, validating constraints safely beneath Gemini's rate limits while remaining 100% deterministic.
+4. **Risk & Decision Agent:** Synthesizes the screening results to calculate an overall product compliance status (PASS, FAIL, WARNING) and identifies critical supply-chain vulnerabilities.
+5. **Review Routing Agent (Human-in-the-Loop):** Acts as a safety valve. If the Document Understanding agent expresses low confidence (e.g., due to a blurry PDF), this agent halts the automated pipeline and routes the document to a UI Review Queue for human validation.
+6. **Report Generation Agent:** Drafts an executive summary of the compliance outcome tailored for stakeholders.
+
+---
+
+## 🔌 MCP Servers (Model Context Protocol)
+
+To eliminate AI hallucinations, the agents are not permitted to "guess" chemical facts or regulatory limits. Instead, they are equipped with two distinct **MCP (Model Context Protocol)** servers that provide standardized tool-calling interfaces:
+
+- **Agent A (Chemical Identity MCP):** A specialized server that connects to the **NIH PubChem API**. Whenever the Document Understanding agent reads a chemical name like "Lead" or "H2O", it calls this MCP server to definitively resolve the name to its canonical CAS Registry Number and known synonyms.
+- **Agent B (Regulation Lookup MCP):** A specialized server that holds the deterministic truth regarding compliance thresholds. The Compliance Screening agent uses this server to query the exact permitted parts-per-million (PPM) for a chemical under a specific regulation. 
+
+By offloading factual lookups to MCP servers, the LLMs are restricted solely to text-extraction and logical reasoning, guaranteeing regulatory accuracy.
 
 ---
 
@@ -74,11 +87,11 @@ graph TD
     Graph --> Agents
     
     subgraph MCP Servers
-        AgentA[PubChem MCP]:::mcp
-        AgentB[Regulation MCP]:::mcp
+        AgentA[Chemical Identity MCP]:::mcp
+        AgentB[Regulation Lookup MCP]:::mcp
     end
     
-    DocExt -->|Resolve CAS| AgentA
+    DocExt -->|Resolve CAS via PubChem| AgentA
     CompScreen -->|Query Rules| AgentB
     
     Agents -->|Dual Write| Postgres
@@ -139,7 +152,6 @@ source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
 ```
-The API will be available at `http://localhost:8000`.
 
 ### 5. Start the Frontend UI
 Open a **second terminal** in the project root:
@@ -156,30 +168,6 @@ pip install -r requirements.txt
 streamlit run frontend/1_Dashboard.py
 ```
 The UI opens automatically at `http://localhost:8501`.
-
----
-
-## 📂 Project Structure
-
-```text
-project_root/
-├── backend/
-│   ├── agents/          # LangGraph state machine, nodes, and parsers
-│   ├── api/             # FastAPI routers (dashboard, pipeline, products, etc.)
-│   ├── graph/           # LangGraph configuration (pipeline_graph.py)
-│   ├── utils/           # Database drivers and matching utilities
-│   ├── main.py          # FastAPI application entrypoint
-│   └── requirements.txt
-├── frontend/
-│   ├── pages/           # Streamlit UI routing components
-│   ├── 1_Dashboard.py   # Streamlit entrypoint
-│   └── requirements.txt
-├── mcp_servers/         # Model Context Protocol servers
-│   ├── chemical_identity_mcp/
-│   └── regulation_lookup_mcp/
-├── .env                 # Environment credentials (Not checked into source)
-└── README.md            # You are here
-```
 
 ---
 
