@@ -113,7 +113,7 @@ with st.expander("Filter Results", expanded=True):
         with colA:
             submitted = st.form_submit_button("Apply Filters", type="primary")
         with colB:
-            cleared = st.form_submit_button("Clear Filters", on_click=clear_filters)
+            st.form_submit_button("Clear Filters", on_click=clear_filters)
             
         if submitted:
             st.session_state.filters["product_id"] = product_options[sel_prod]

@@ -24,7 +24,7 @@ if not data:
 
 st.header("Portfolio Overview")
 col1, col2, col3 = st.columns(3)
-col4, col5, col6 = st.columns(3)
+col4, col5 = st.columns([1, 1])
 
 with col1:
     st.metric("Products Screened", data.get("products_screened_count", 0))
@@ -45,28 +45,18 @@ with col4:
 with col5:
     st.metric("Open Manual Reviews", data.get("open_manual_reviews_count", 0))
 
-with col6:
-    st.metric("High Risk Suppliers", "Available once Supplier Risk (Task 7) is built")
-
 st.markdown("---")
 st.header("Compliance Status")
 
-colA, colB = st.columns(2)
-
-with colA:
-    st.subheader("PASS/FAIL Distribution")
-    dist = data.get("pass_fail_distribution", {})
-    if not dist:
-        st.info("No completed screening runs yet")
-    else:
-        # Streamlit bar_chart expects a dataframe where index is category and column is value
-        df_dist = pd.DataFrame(list(dist.items()), columns=["Status", "Count"])
-        df_dist.set_index("Status", inplace=True)
-        st.bar_chart(df_dist)
-
-with colB:
-    st.subheader("Supplier Risk Ranking")
-    st.info("Available once Supplier Risk (Task 7) is built")
+st.subheader("PASS/FAIL Distribution")
+dist = data.get("pass_fail_distribution", {})
+if not dist:
+    st.info("No completed screening runs yet")
+else:
+    # Streamlit bar_chart expects a dataframe where index is category and column is value
+    df_dist = pd.DataFrame(list(dist.items()), columns=["Status", "Count"])
+    df_dist.set_index("Status", inplace=True)
+    st.bar_chart(df_dist)
 
 st.markdown("---")
 st.header("Regulatory Violations & Restricted Substances")

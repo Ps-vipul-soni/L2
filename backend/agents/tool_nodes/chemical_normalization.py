@@ -1,8 +1,10 @@
 import os
 import sys
+import json
+
 from typing import Dict, Any
 import asyncpg
-import asyncio
+from backend.utils.telemetry import fire_and_forget_log
 
 # Append root path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..')))
@@ -26,22 +28,27 @@ async def chemical_normalization_node(state: Dict[str, Any]) -> Dict[str, Any]:
         
     db_pool: asyncpg.Pool = state["db_pool"]
     mcp_client_a = state["mcp_client_a"]
-    document_path = state["document_path"]
+    workflow_run_id = state.get("workflow_run_id")
+
     product_id = state["product_id"]
     
-    document_id = state["document_id"]
+    document_ids = state.get("document_ids", [])
     
-    # 1. Update Document with extraction metadata
     async with db_pool.acquire() as conn:
-        await conn.execute(
-            """
-            UPDATE documents 
-            SET extraction_confidence = $1 
-            WHERE id = $2
-            """,
-            extraction_result["extraction_confidence"],
-            document_id
-        )
+        for doc_id in document_ids:
+            conf_dict = extraction_result.get("extraction_confidence", {})
+            if doc_id not in conf_dict:
+                raise ValueError(f"document_id '{doc_id}' is missing from extraction_confidence mapping.")
+            
+            await conn.execute(
+                """
+                UPDATE documents 
+                SET extraction_confidence = $1 
+                WHERE id = $2
+                """,
+                conf_dict[doc_id],
+                doc_id
+            )
     
     normalized_components = []
     
@@ -66,15 +73,20 @@ async def chemical_normalization_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 for ext_ing in extracted_comp.get("ingredients", []):
                     raw_name = ext_ing["raw_name"]
                     
-                    # Call Agent A via MCP Client
-                    # mcp_client.call_tool returns a CallToolResult. Its content is a list of TextContent objects.
-                    mcp_res = await mcp_client_a.call_tool("resolve_ingredient", arguments={"name": raw_name})
-                    
-                    # The response content is typically JSON text inside the first content block
-                    import json
-                    result_json = json.loads(mcp_res.content[0].text)
+                    try:
+                        # Call Agent A via MCP Client
+                        mcp_res = await mcp_client_a.call_tool("resolve_ingredient", arguments={"name": raw_name})
+                        
+                        # The response content is typically JSON text inside the first content block
+                        result_json = json.loads(mcp_res.content[0].text)
+                        fire_and_forget_log(db_pool, workflow_run_id, "MCP", "SUCCESS")
+                    except Exception as e:
+                        fire_and_forget_log(db_pool, workflow_run_id, "MCP", "FAILED")
+                        print(f"Error calling chemical normalization MCP: {e}")
+                        result_json = {}
                     
                     # Merge concentration back in since MCP doesn't know about it
+                    result_json["raw_name"] = raw_name
                     result_json["concentration_value"] = ext_ing.get("concentration_value")
                     result_json["concentration_unit"] = ext_ing.get("concentration_unit")
                     
@@ -123,20 +135,22 @@ async def chemical_normalization_node(state: Dict[str, Any]) -> Dict[str, Any]:
                         VALUES ($1, $2, $3, $4, $5)
                         ON CONFLICT (component_id, ingredient_id, source_document_id) DO NOTHING
                         """,
-                        comp_id, ing_id, norm_ing.concentration_value, norm_ing.concentration_unit, document_id
+                        comp_id, ing_id, norm_ing.concentration_value, norm_ing.concentration_unit, extracted_comp.get("source_document_id")
                     )
                 
                 normalized_components.append(NormalizedComponent(
                     component_name=extracted_comp["component_name"],
-                    ingredients=normalized_ingredients
+                    ingredients=normalized_ingredients,
+                    source_document_id=extracted_comp.get("source_document_id")
                 ))
     
+    primary_doc_id = document_ids[0] if document_ids else ""
     normalization_result = NormalizationResult(
-        document_id=document_id,
+        document_id=primary_doc_id,
         components=normalized_components
     )
     
     return {
-        "document_id": document_id,
+        "document_ids": document_ids,
         "normalization_result": normalization_result.model_dump()
     }

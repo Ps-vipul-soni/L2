@@ -1,9 +1,10 @@
 import os
-import json
 from typing import Dict, Any
 import asyncpg
 from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import BaseModel, Field
+from backend.utils.telemetry import fire_and_forget_log
+
 
 class LLMProductMatch(BaseModel):
     matches: bool = Field(..., description="True if the product type falls under the regulation's applicable product types")
@@ -14,6 +15,7 @@ from backend.utils.matching import check_string_match, check_jurisdiction
 async def regulation_planning_node(state: Dict[str, Any]) -> Dict[str, Any]:
     db_pool: asyncpg.Pool = state["db_pool"]
     product_id = state["product_id"]
+    workflow_run_id = state.get("workflow_run_id")
     
     # Retrieve LLM
     api_key = os.environ.get("GEMINI_API_KEY")
@@ -76,7 +78,13 @@ async def regulation_planning_node(state: Dict[str, Any]) -> Dict[str, Any]:
 Does the product type '{p_type}' logically fall into any of these regulatory categories: {r_types}?
 Consider industry standards and common sense (e.g. 'smartwatch' is 'electronics', 't-shirt' is 'apparel').
 """
-                        res = structured_llm.invoke(prompt)
+                        try:
+                            res = await structured_llm.ainvoke(prompt)
+                            fire_and_forget_log(db_pool, workflow_run_id, "LLM", "SUCCESS")
+                        except Exception as e:
+                            fire_and_forget_log(db_pool, workflow_run_id, "LLM", "FAILED")
+                            print(f"Error invoking LLM in regulation_planning: {e}")
+                            continue
                         if res.matches:
                             is_type_match = True
                             matched_on.append(f"product_type_fuzzy={p_type} (LLM: {res.reasoning})")

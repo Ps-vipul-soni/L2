@@ -1,5 +1,4 @@
-from fastapi import APIRouter, Request, HTTPException
-from typing import Dict, Any, List
+from fastapi import APIRouter, Request
 
 router = APIRouter(
     prefix="/dashboard",

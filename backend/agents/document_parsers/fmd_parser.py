@@ -1,7 +1,7 @@
 from lxml import etree
 from backend.schemas.state_schemas import DocumentExtractionResult, ExtractedComponent, ExtractedIngredient
 
-def parse_fmd(document_path: str) -> DocumentExtractionResult:
+async def parse_fmd(document_path: str, db_pool=None, workflow_run_id=None) -> DocumentExtractionResult:
     """Parses an XML FMD document using lxml, flattening the hierarchy."""
     try:
         tree = etree.parse(document_path)
@@ -11,7 +11,7 @@ def parse_fmd(document_path: str) -> DocumentExtractionResult:
             doc_type="FMD",
             product_name_hint=None,
             components=[],
-            extraction_confidence=0.0,
+            extraction_confidence={"unknown": 0.0},
             extraction_notes=f"Failed to parse XML: {str(e)}"
         )
 
@@ -64,6 +64,6 @@ def parse_fmd(document_path: str) -> DocumentExtractionResult:
         doc_type="FMD",
         product_name_hint=root.attrib.get("name", None),
         components=list(components_map.values()),
-        extraction_confidence=0.9,
+        extraction_confidence={"unknown": 0.9},
         extraction_notes="Deterministically parsed via lxml hierarchical flattening."
     )

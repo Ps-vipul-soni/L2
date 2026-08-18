@@ -115,7 +115,7 @@ async def run_pipeline(document_path: str):
             }
             
             print("\nInvoking LangGraph Pipeline...")
-            final_state = await graph.ainvoke(initial_state)
+            await graph.ainvoke(initial_state)
             
             # 4. Graceful DB Cleanup on Success
             async with pool.acquire() as conn:

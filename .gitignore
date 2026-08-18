@@ -8,55 +8,33 @@ __pycache__/
 venv/
 ENV/
 env/
+mcp_servers/**/.venv/
+mcp_servers/**/__pycache__/
 
 # Environment variables
 .env
 .env.local
 
-# IDEs and Editors
+# IDEs and OS files
 .vscode/
 .idea/
 *.swp
 *.swo
+Thumbs.db
 .DS_Store
+desktop.ini
 
-# Testing and typing caches
+# Testing and coverage
 .pytest_cache/
 .mypy_cache/
 .coverage
+htmlcov/
 
-# Generated output and reports
+# Runtime outputs and logs
 reports_output/
-*.log
-
-# MCP specific or local caches
-mcp_servers/**/.venv/
-mcp_servers/**/__pycache__/
-
-# Manual verification scripts
-backend/query_results.py
-backend/verify.py
-backend/extract_pdf.py
-timing.py
-
-# Temporary test cases and agent verifications
-**/test_*.py
-**/verify_*.py
-
-# Runtime uploads (Phase 2 API layer)
 storage/uploads/
+*.log
+*.sql.bak
 
-# Agent scratchpad / temporary audit scripts
-scratch/
-*_audit.md
-seed_*.py
-
-# Test and temporary artifacts
-*.pdf
-*.csv
-*.png
-*.jpg
-*.jpeg
-*.md
-!README.md
-!docs/
+# Temporary directory (contains scratch, one-off scripts, audits & backups)
+temp/

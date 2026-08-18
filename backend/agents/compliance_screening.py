@@ -5,15 +5,19 @@ from typing import Dict, Any
 import asyncpg
 from pydantic import BaseModel, Field
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import HumanMessage
 
 # Append root path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
 from backend.schemas.state_schemas import ScreeningResult, ScreeningRunResult, ScreeningStatus
+from backend.utils.telemetry import fire_and_forget_log
 
-class LLMReasoning(BaseModel):
+class BatchedLLMReasoning(BaseModel):
+    tracking_id: int = Field(..., description="The unique integer ID provided for this evaluation")
     reasoning: str = Field(..., description="Explainability text why this status applies, citing threshold/exemption")
+
+class BatchReasoningList(BaseModel):
+    results: list[BatchedLLMReasoning]
 
 async def compliance_screening_node(state: Dict[str, Any]) -> Dict[str, Any]:
     normalization_result = state.get("normalization_result")
@@ -30,12 +34,16 @@ async def compliance_screening_node(state: Dict[str, Any]) -> Dict[str, Any]:
     if not api_key:
         raise ValueError("GEMINI_API_KEY is not set.")
     llm = ChatGoogleGenerativeAI(model="gemini-3.1-flash-lite", api_key=api_key, temperature=0.0)
-    structured_llm = llm.with_structured_output(LLMReasoning)
+    structured_llm = llm.with_structured_output(BatchReasoningList)
     
     screening_results_list = []
     applicable_regulations = state.get("applicable_regulations", [])
     # Extract just the codes from the state dicts
     regulations_to_check = [r["code"] for r in applicable_regulations] if applicable_regulations else []
+    
+    pending_explanations = []
+    db_insert_records = []
+    tracking_counter = 0
     
     async with db_pool.acquire() as conn:
         for comp in normalization_result.get("components", []):
@@ -67,10 +75,12 @@ async def compliance_screening_node(state: Dict[str, Any]) -> Dict[str, Any]:
                         continue
                         
                     # Call Agent B
-                    if cas_number:
+                    try:
                         mcp_res = await mcp_client_b.call_tool("get_thresholds_for_ingredient", arguments={"cas_number": cas_number, "regulation_code": reg_code})
                         threshold_data = json.loads(mcp_res.content[0].text)
-                    else:
+                        fire_and_forget_log(db_pool, workflow_run_id, "MCP", "SUCCESS")
+                    except Exception as e:
+                        fire_and_forget_log(db_pool, workflow_run_id, "MCP", "FAILED")
                         threshold_data = {"status": "not_found"}
                         
                     status: ScreeningStatus = "ALLOWED"
@@ -101,46 +111,113 @@ async def compliance_screening_node(state: Dict[str, Any]) -> Dict[str, Any]:
                             status = "NEEDS_REVIEW"
                             confidence = 0.5
                             
-                    # Ask LLM for reasoning only if not already set (e.g. bypass for PROP_65)
+                    # Construct record to track state
+                    record = {
+                        "tracking_id": tracking_counter,
+                        "comp_name": comp_name,
+                        "cas_number": cas_number,
+                        "canonical_name": canonical_name,
+                        "reg_code": reg_code,
+                        "status": status,
+                        "measured_val": measured_val,
+                        "threshold_val": threshold_val,
+                        "confidence": confidence,
+                        "reasoning": reasoning,
+                        "workflow_run_id": workflow_run_id,
+                        "comp_id": comp_id,
+                        "ing_id": ing_id,
+                        "reg_id": reg_id
+                    }
+                    
+                    # Determine if LLM reasoning is needed
                     if reg_code != "PROP_65":
-                        prompt = f"""
-You are a compliance reasoning engine. I have evaluated an ingredient against a regulation.
-Ingredient: {canonical_name} (CAS: {cas_number})
-Measured: {measured_val}
-Regulation: {reg_code}
-Threshold: {threshold_val}
-Exemption Notes: {exemption_notes}
-Assigned Status: {status}
+                        pending_explanations.append({
+                            "tracking_id": tracking_counter,
+                            "ingredient": canonical_name,
+                            "cas": cas_number,
+                            "measured": measured_val,
+                            "regulation": reg_code,
+                            "threshold": threshold_val,
+                            "exemption_notes": exemption_notes,
+                            "assigned_status": status
+                        })
+                    
+                    db_insert_records.append(record)
+                    tracking_counter += 1
+                    
+        # --- Batch LLM Execution ---
+        # Chunk requests into sizes of 10 to avoid token limits
+        CHUNK_SIZE = 10
+        for i in range(0, len(pending_explanations), CHUNK_SIZE):
+            chunk = pending_explanations[i:i+CHUNK_SIZE]
+            
+            prompt = f"""
+You are a compliance reasoning engine. I have evaluated several ingredients against regulations.
+For each evaluation below, provide a short, professional explainability sentence summarizing why its status was assigned.
+Do not change the assigned status. Just explain it.
 
-Provide a short, professional explainability sentence summarizing why this status was assigned.
-Do not change the status. Just explain it.
+Evaluations:
+{json.dumps(chunk, indent=2)}
+
+Return a JSON array of objects matching the structured schema (tracking_id, reasoning).
 """
-                        llm_res = structured_llm.invoke(prompt)
-                        reasoning = llm_res.reasoning
-                    
-                    # Construct ScreeningResult
-                    sr = ScreeningResult(
-                        component_name=comp_name,
-                        ingredient_cas_number=cas_number,
-                        ingredient_canonical_name=canonical_name,
-                        regulation_code=reg_code,
-                        status=status,
-                        measured_value=measured_val,
-                        threshold_value=threshold_val,
-                        confidence=confidence,
-                        reasoning=reasoning
-                    )
-                    screening_results_list.append(sr)
-                    
-                    # Persist
-                    await conn.execute(
-                        """
-                        INSERT INTO screening_results 
-                        (workflow_run_id, component_id, ingredient_id, regulation_id, status, measured_value, threshold_value, confidence, reasoning)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                        """,
-                        workflow_run_id, comp_id, ing_id, reg_id, status, measured_val, threshold_val, confidence, reasoning
-                    )
+            try:
+                llm_res = await structured_llm.ainvoke(prompt)
+                fire_and_forget_log(db_pool, workflow_run_id, "LLM", "SUCCESS")
+            except Exception as e:
+                fire_and_forget_log(db_pool, workflow_run_id, "LLM", "FAILED")
+                raise RuntimeError(f"LLM Reasoning failed for batch: {str(e)}")
+                
+            # 5-Point Validation
+            returned_ids = [res.tracking_id for res in llm_res.results]
+            expected_ids = [req["tracking_id"] for req in chunk]
+            
+            if len(returned_ids) != len(expected_ids):
+                raise RuntimeError(f"Validation Error: Expected {len(expected_ids)} reasonings, got {len(returned_ids)}")
+                
+            if len(returned_ids) != len(set(returned_ids)):
+                raise RuntimeError("Validation Error: Duplicate tracking_ids returned by LLM")
+                
+            missing_ids = set(expected_ids) - set(returned_ids)
+            if missing_ids:
+                raise RuntimeError(f"Validation Error: LLM dropped expected tracking_ids: {missing_ids}")
+                
+            unknown_ids = set(returned_ids) - set(expected_ids)
+            if unknown_ids:
+                raise RuntimeError(f"Validation Error: LLM hallucinated unknown tracking_ids: {unknown_ids}")
+                
+            # Map reasoning back
+            for res in llm_res.results:
+                if not res.reasoning or not isinstance(res.reasoning, str):
+                    raise RuntimeError(f"Validation Error: Invalid reasoning text for tracking_id {res.tracking_id}")
+                db_insert_records[res.tracking_id]["reasoning"] = res.reasoning
+
+        # --- DB Persistence (Atomic) ---
+        async with conn.transaction():
+            for rec in db_insert_records:
+                sr = ScreeningResult(
+                    component_name=rec["comp_name"],
+                    ingredient_cas_number=rec["cas_number"],
+                    ingredient_canonical_name=rec["canonical_name"],
+                    regulation_code=rec["reg_code"],
+                    status=rec["status"],
+                    measured_value=rec["measured_val"],
+                    threshold_value=rec["threshold_val"],
+                    confidence=rec["confidence"],
+                    reasoning=rec["reasoning"]
+                )
+                screening_results_list.append(sr)
+                
+                await conn.execute(
+                    """
+                    INSERT INTO screening_results 
+                    (workflow_run_id, component_id, ingredient_id, regulation_id, status, measured_value, threshold_value, confidence, reasoning)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                    """,
+                    rec["workflow_run_id"], rec["comp_id"], rec["ing_id"], rec["reg_id"], 
+                    rec["status"], rec["measured_val"], rec["threshold_val"], 
+                    rec["confidence"], rec["reasoning"]
+                )
                     
     final_result = ScreeningRunResult(
         workflow_run_id=workflow_run_id,

@@ -22,16 +22,34 @@ def check_string_match(target: str, valid_list: list) -> bool:
             
     return False
 
+def normalize_jurisdiction(target: str) -> str:
+    """Deterministically normalizes valid jurisdictions into their canonical database equivalents."""
+    if not target:
+        return ""
+    
+    t_lower = target.lower().strip()
+    
+    # US normalizations
+    if t_lower in ["us", "usa", "united states", "united states of america"]:
+        return "US"
+        
+    # US-CA normalizations
+    if t_lower in ["us-ca", "california", "ca", "california, usa"]:
+        return "US-CA"
+        
+    # EU normalizations
+    if t_lower in ["eu", "european union"]:
+        return "EU"
+        
+    return target.strip()
+
 def check_jurisdiction(target_country: str, reg_jurisdiction: str) -> bool:
     if not reg_jurisdiction or reg_jurisdiction == 'Global':
         return True
     if not target_country:
         return False
         
-    t_lower = target_country.lower().strip()
-    r_lower = reg_jurisdiction.lower().strip()
+    normalized_target = normalize_jurisdiction(target_country)
+    normalized_reg = normalize_jurisdiction(reg_jurisdiction)
     
-    if t_lower == r_lower or t_lower in r_lower or r_lower in t_lower:
-        return True
-        
-    return False
+    return normalized_target == normalized_reg

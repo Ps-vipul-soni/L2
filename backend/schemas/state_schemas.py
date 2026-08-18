@@ -40,6 +40,7 @@ class ExtractedComponent(BaseModel):
     """
     component_name: str
     ingredients: list[ExtractedIngredient] = Field(default_factory=list)
+    source_document_id: Optional[str] = None
 
 
 class DocumentExtractionResult(BaseModel):
@@ -52,10 +53,10 @@ class DocumentExtractionResult(BaseModel):
         None, description="Product/material name as best inferred from the document, for linking to products.name"
     )
     components: list[ExtractedComponent] = Field(default_factory=list)
-    extraction_confidence: float = Field(
-        ..., ge=0.0, le=1.0,
-        description="Agent's self-assessed confidence in the completeness/correctness of this extraction. "
-                    "Below-threshold values route to review_queue in Phase 2."
+    extraction_confidence: dict[str, float] = Field(
+        ...,
+        description="Mapping of document_id to its specific confidence score (0.0 to 1.0). "
+                    "Below-threshold values route the specific document to review_queue in Phase 2."
     )
     extraction_notes: Optional[str] = Field(
         None, description="Free-text notes on ambiguity, illegible sections, or assumptions made — "
@@ -88,6 +89,7 @@ class NormalizedIngredient(BaseModel):
 class NormalizedComponent(BaseModel):
     component_name: str
     ingredients: list[NormalizedIngredient] = Field(default_factory=list)
+    source_document_id: Optional[str] = None
 
 
 class NormalizationResult(BaseModel):

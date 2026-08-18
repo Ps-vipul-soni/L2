@@ -3,6 +3,8 @@ import fitz  # PyMuPDF
 from langchain_google_genai import ChatGoogleGenerativeAI
 from backend.schemas.state_schemas import DocumentExtractionResult
 
+from backend.utils.telemetry import fire_and_forget_log
+
 def extract_pdf_text(file_path: str) -> str:
     """Extracts raw string text from a PDF file safely using PyMuPDF."""
     text = ""
@@ -11,7 +13,7 @@ def extract_pdf_text(file_path: str) -> str:
             text += page.get_text()
     return text
 
-def parse_sds(document_path: str) -> DocumentExtractionResult:
+async def parse_sds(document_path: str, db_pool=None, workflow_run_id=None) -> DocumentExtractionResult:
     """Parses an SDS PDF document using Gemini."""
     # Extract raw text directly from the local PDF file
     raw_text = extract_pdf_text(document_path)
@@ -50,5 +52,10 @@ Here is the raw text extracted from the PDF:
 ---
 """
     
-    # Run structured extraction
-    return structured_llm.invoke(prompt)
+    try:
+        res = await structured_llm.ainvoke(prompt)
+        fire_and_forget_log(db_pool, workflow_run_id, "LLM", "SUCCESS")
+        return res
+    except Exception as e:
+        fire_and_forget_log(db_pool, workflow_run_id, "LLM", "FAILED")
+        raise e

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, HTTPException, Query
+from fastapi import APIRouter, Request, HTTPException
 from typing import Optional
 
 router = APIRouter(tags=["Screening Results"])
@@ -7,8 +7,18 @@ router = APIRouter(tags=["Screening Results"])
 async def get_regulations(request: Request):
     pool = request.app.state.pool
     async with pool.acquire() as conn:
-        records = await conn.fetch("SELECT id, code, name FROM regulations ORDER BY code ASC")
-    return [{"id": str(r["id"]), "code": r["code"], "name": r["name"]} for r in records]
+        records = await conn.fetch("""
+            SELECT 
+                r.id, 
+                r.code, 
+                r.name, 
+                COUNT(DISTINCT rt.ingredient_id) as chemical_count 
+            FROM regulations r
+            LEFT JOIN regulation_thresholds rt ON r.id = rt.regulation_id
+            GROUP BY r.id, r.code, r.name
+            ORDER BY r.code ASC
+        """)
+    return [{"id": str(r["id"]), "code": r["code"], "name": r["name"], "chemical_count": r["chemical_count"]} for r in records]
 
 @router.get("/screening-results")
 async def get_screening_results(

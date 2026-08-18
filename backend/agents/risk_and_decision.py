@@ -4,11 +4,13 @@ import json
 from typing import Dict, Any
 import asyncpg
 from pydantic import BaseModel, Field
+
+from backend.utils.telemetry import fire_and_forget_log
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 # Append root path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
-from backend.schemas.state_schemas import ComplianceDecision, OverallStatus
+from backend.schemas.state_schemas import ComplianceDecision
 
 class DecisionModel(BaseModel):
     decision_rationale: str = Field(..., description="Short explanation of how overall_status and risk_score were derived from the screening results.")
@@ -29,7 +31,7 @@ async def risk_and_decision_node(state: Dict[str, Any]) -> Dict[str, Any]:
     structured_llm = llm.with_structured_output(DecisionModel)
     
     # Simple risk algorithm
-    has_restricted = False
+
     has_exceeded = False
     has_review = False
     
@@ -41,7 +43,10 @@ async def risk_and_decision_node(state: Dict[str, Any]) -> Dict[str, Any]:
         elif st == "NEEDS_REVIEW" or st == "EXEMPTION_AVAILABLE":
             has_review = True
             
-    if has_exceeded:
+    if len(results) == 0:
+        overall_status = "REVIEW_REQUIRED"
+        risk_score = 0.0
+    elif has_exceeded:
         overall_status = "FAIL"
         risk_score = 90.0
     elif has_review:
@@ -51,8 +56,11 @@ async def risk_and_decision_node(state: Dict[str, Any]) -> Dict[str, Any]:
         overall_status = "PASS"
         risk_score = 10.0
         
-    # Ask LLM to generate the rationale
-    prompt = f"""
+    # Ask LLM to generate the rationale (or hardcode for the empty assessment case)
+    if len(results) == 0:
+        decision_rationale = "No applicable regulations were identified, therefore no compliance assessment was performed."
+    else:
+        prompt = f"""
 You are a compliance risk officer.
 I have aggregated the following screening results into an overall status: {overall_status} and risk score: {risk_score}.
 Summary of individual results:
@@ -60,14 +68,21 @@ Summary of individual results:
 
 Please provide a concise decision_rationale.
 """
-    llm_res = structured_llm.invoke(prompt)
+        try:
+            llm_res = await structured_llm.ainvoke(prompt)
+            fire_and_forget_log(db_pool, workflow_run_id, "LLM", "SUCCESS")
+            decision_rationale = llm_res.decision_rationale
+        except Exception as e:
+            fire_and_forget_log(db_pool, workflow_run_id, "LLM", "FAILED")
+            decision_rationale = "Error generating rationale."
+            print(f"Error in risk_and_decision LLM: {e}")
     
     decision = ComplianceDecision(
         workflow_run_id=workflow_run_id,
         product_id=product_id,
         overall_status=overall_status,
         risk_score=risk_score,
-        decision_rationale=llm_res.decision_rationale
+        decision_rationale=decision_rationale
     )
     
     # Persist

@@ -1,4 +1,3 @@
-import os
 import requests
 import streamlit as st
 
@@ -31,33 +30,34 @@ with st.container(border=True):
     selected_product_name = st.selectbox("1. Select Product Portfolio", options=list(product_options.keys()))
     product_id = product_options[selected_product_name]
     
-    uploaded_file = st.file_uploader("2. Upload Supplier Document", type=["pdf", "csv", "xls", "xlsx", "xml"])
+    uploaded_files = st.file_uploader("2. Upload Supplier Document(s)", type=["pdf", "csv", "xls", "xlsx", "xml"], accept_multiple_files=True)
     
-    if st.button("Trigger AI Pipeline", type="primary", disabled=not uploaded_file):
+    if st.button("Trigger AI Pipeline", type="primary", disabled=not uploaded_files):
         
-        # 1. Upload Document
-        document_id = None
-        with st.spinner("Uploading document..."):
+        # 1. Upload Documents
+        document_ids = []
+        with st.spinner("Uploading documents..."):
             try:
-                files = {"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
-                data = {"product_id": product_id}
-                upload_res = requests.post(f"{API_BASE}/documents/upload", files=files, data=data)
-                
-                if upload_res.status_code == 200:
-                    document_id = upload_res.json().get("document_id")
-                else:
-                    st.error(f"Upload failed: {upload_res.json().get('detail', upload_res.text)}")
+                for uploaded_file in uploaded_files:
+                    files = {"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
+                    data = {"product_id": product_id}
+                    upload_res = requests.post(f"{API_BASE}/documents/upload", files=files, data=data)
+                    
+                    if upload_res.status_code == 200:
+                        document_ids.append(upload_res.json().get("document_id"))
+                    else:
+                        st.error(f"Upload failed for {uploaded_file.name}: {upload_res.json().get('detail', upload_res.text)}")
             except Exception as e:
                 st.error(f"Connection error during upload: {e}")
 
         # 2. Trigger Pipeline (Blocking)
-        if document_id:
+        if document_ids and len(document_ids) == len(uploaded_files):
             workflow_run_id = None
-            with st.spinner("Running pipeline... Please wait as the AI analyzes the document and screens for compliance."):
+            with st.spinner("Running pipeline... Please wait as the AI analyzes the documents and screens for compliance."):
                 try:
                     trigger_res = requests.post(
                         f"{API_BASE}/pipeline/trigger", 
-                        json={"document_id": document_id}
+                        json={"document_ids": document_ids}
                     )
                     if trigger_res.status_code == 200:
                         workflow_run_id = trigger_res.json().get("workflow_run_id")
@@ -98,10 +98,9 @@ with st.container(border=True):
                                     stages = res.json()
                                     
                                     # 1. Document Understanding
-                                    doc = stages.get("document_understanding")
-                                    if doc:
-                                        with st.expander("📄 Document Understanding"):
-                                            st.write(f"**Filename:** {doc['filename']}")
+                                    docs = stages.get("document_understanding", [])
+                                    for doc in docs:
+                                        with st.expander(f"📄 Document Understanding: {doc['filename']}"):
                                             st.write(f"**Type:** {doc['doc_type']}")
                                             st.write(f"**Confidence:** {doc['extraction_confidence']}")
                                             if doc.get("extraction_notes"):

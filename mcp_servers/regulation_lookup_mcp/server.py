@@ -1,5 +1,4 @@
 import os
-import asyncio
 import asyncpg
 from typing import Optional, Dict, Any, List
 from dotenv import load_dotenv
@@ -20,10 +19,6 @@ async def get_db_pool() -> asyncpg.Pool:
         # Creating a pool instead of a single connection
         _pool = await asyncpg.create_pool(db_url, min_size=1, max_size=10)
     return _pool
-
-async def list_applicable_regulations() -> List[str]:
-    """Return the list of applicable regulations. Hardcoded for Phase 1."""
-    return ["RoHS", "REACH_SVHC"]
 
 async def get_thresholds_for_ingredient(cas_number: str, regulation_code: str) -> Dict[str, Any]:
     """

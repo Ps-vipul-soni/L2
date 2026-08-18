@@ -1,7 +1,6 @@
 import os
 import sys
 import uuid
-from typing import Dict, Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from contextlib import AsyncExitStack
@@ -13,35 +12,63 @@ from backend.graph.pipeline_graph import build_pipeline_graph
 router = APIRouter()
 
 class TriggerRequest(BaseModel):
-    document_id: str
+    document_ids: list[str]
 
 @router.post("/trigger")
 async def trigger_pipeline(request: Request, body: TriggerRequest):
-    document_id = body.document_id
-    try:
-        uuid.UUID(document_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid document_id format.")
+    document_ids = body.document_ids
+    if not document_ids:
+        raise HTTPException(status_code=400, detail="Empty document_ids list")
         
+    if len(document_ids) != len(set(document_ids)):
+        raise HTTPException(status_code=400, detail="Duplicate document_ids found")
+        
+    for doc_id in document_ids:
+        try:
+            uuid.UUID(doc_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid document_id format: {doc_id}")
+            
     pool = request.app.state.pool
     
-    # Check if document exists and get path/product
+    file_paths = []
+    
+    # Check if documents exist and get path/product
     async with pool.acquire() as conn:
-        doc = await conn.fetchrow("SELECT file_path, product_id FROM documents WHERE id = $1", document_id)
-        if not doc:
-            raise HTTPException(status_code=404, detail="Document not found")
+        async with conn.transaction():
+            docs = await conn.fetch("SELECT id, file_path, product_id FROM documents WHERE id = ANY($1::uuid[])", document_ids)
             
-        file_path = doc["file_path"]
-        product_id = str(doc["product_id"])
-        
-        if not os.path.exists(file_path):
-            raise HTTPException(status_code=500, detail="Document file is missing from disk")
+            if len(docs) != len(document_ids):
+                found_ids = {str(d['id']) for d in docs}
+                missing = [d for d in document_ids if d not in found_ids]
+                raise HTTPException(status_code=404, detail=f"Documents not found: {missing}")
+                
+            # Create a lookup dictionary to preserve input order
+            doc_map = {str(d['id']): d for d in docs}
             
-        # Create workflow run
-        workflow_run_id = str(await conn.fetchval(
-            "INSERT INTO workflow_runs (product_id, status) VALUES ($1, 'RUNNING') RETURNING id",
-            product_id
-        ))
+            product_id = str(docs[0]["product_id"])
+            for doc_id in document_ids:
+                d = doc_map[doc_id]
+                if str(d["product_id"]) != product_id:
+                    raise HTTPException(status_code=400, detail="All documents must belong to the same product_id")
+                    
+                if not os.path.exists(d["file_path"]):
+                    raise HTTPException(status_code=500, detail=f"Document file is missing from disk: {d['id']}")
+                
+                file_paths.append(d["file_path"])
+                
+            # Create workflow run
+            workflow_run_id = str(await conn.fetchval(
+                "INSERT INTO workflow_runs (product_id, status) VALUES ($1, 'RUNNING') RETURNING id",
+                product_id
+            ))
+            
+            # Insert into workflow_run_documents
+            wrd_records = [(workflow_run_id, str(d["id"])) for d in docs]
+            await conn.executemany(
+                "INSERT INTO workflow_run_documents (workflow_run_id, document_id) VALUES ($1, $2)",
+                wrd_records
+            )
         
     # Run the pipeline synchronously (blocking the request)
     # MCP server initialization
@@ -68,16 +95,17 @@ async def trigger_pipeline(request: Request, body: TriggerRequest):
             raise HTTPException(status_code=500, detail=f"Failed to start MCP servers: {str(e)}")
             
         # Invoke Graph
+        pipeline_err = None
         try:
             graph = build_pipeline_graph()
             initial_state = {
-                "document_path": file_path,
+                "document_paths": file_paths,
                 "workflow_run_id": workflow_run_id,
                 "product_id": product_id,
                 "db_pool": pool,
                 "mcp_client_a": mcp_client_a,
                 "mcp_client_b": mcp_client_b,
-                "document_id": document_id
+                "document_ids": document_ids
             }
             
             # Wait for LangGraph to complete
@@ -90,9 +118,13 @@ async def trigger_pipeline(request: Request, body: TriggerRequest):
                     workflow_run_id
                 )
         except Exception as e:
-            async with pool.acquire() as conn:
-                await conn.execute("UPDATE workflow_runs SET status = 'FAILED', completed_at = now() WHERE id = $1", workflow_run_id)
-            raise HTTPException(status_code=500, detail=f"Pipeline execution failed: {str(e)}")
+            pipeline_err = e
+            
+    # Outside AsyncExitStack: TaskGroup is successfully closed, safe to raise HTTPExceptions
+    if pipeline_err:
+        async with pool.acquire() as conn:
+            await conn.execute("UPDATE workflow_runs SET status = 'FAILED', completed_at = now() WHERE id = $1", workflow_run_id)
+        raise HTTPException(status_code=500, detail=f"Pipeline execution failed: {str(pipeline_err)}")
             
     return {"workflow_run_id": workflow_run_id, "status": "Pipeline completed or halted for review."}
 
@@ -258,27 +290,28 @@ async def get_pipeline_stages(request: Request, workflow_run_id: str):
         product_id = run["product_id"]
         
         # 1. Document Understanding
-        doc = await conn.fetchrow("""
+        docs = await conn.fetch("""
             SELECT d.filename, d.doc_type, d.extraction_confidence, d.extraction_notes, d.id
             FROM documents d
-            WHERE d.product_id = $1
-            ORDER BY d.uploaded_at DESC LIMIT 1
-        """, product_id)
+            JOIN workflow_run_documents wrd ON d.id = wrd.document_id
+            WHERE wrd.workflow_run_id = $1
+            ORDER BY d.uploaded_at ASC
+        """, workflow_run_id)
         
-        doc_understanding = None
-        doc_id = None
-        if doc:
-            doc_id = doc["id"]
-            doc_understanding = {
+        doc_understanding = []
+        doc_ids = []
+        for doc in docs:
+            doc_ids.append(doc["id"])
+            doc_understanding.append({
                 "filename": doc["filename"],
                 "doc_type": doc["doc_type"],
                 "extraction_confidence": float(doc["extraction_confidence"]) if doc["extraction_confidence"] else None,
                 "extraction_notes": doc["extraction_notes"]
-            }
+            })
             
         # 2. Ingredient Extraction
         ingredient_extraction = []
-        if doc_id:
+        if doc_ids:
             ingredients = await conn.fetch("""
                 SELECT 
                     c.name as component_name,
@@ -290,9 +323,9 @@ async def get_pipeline_stages(request: Request, workflow_run_id: str):
                 FROM component_ingredients ci
                 JOIN components c ON ci.component_id = c.id
                 JOIN ingredients i ON ci.ingredient_id = i.id
-                WHERE ci.source_document_id = $1
+                WHERE ci.source_document_id = ANY($1::uuid[])
                 ORDER BY c.name ASC, i.canonical_name ASC
-            """, doc_id)
+            """, doc_ids)
             for ing in ingredients:
                 ingredient_extraction.append({
                     "component_name": ing["component_name"],

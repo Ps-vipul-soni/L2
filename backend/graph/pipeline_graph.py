@@ -18,7 +18,7 @@ from backend.graph.review_routing import review_routing_node, LOW_CONFIDENCE_THR
 
 class PipelineState(TypedDict):
     # Core orchestration inputs
-    document_path: str
+    document_paths: list[str]
     workflow_run_id: str
     product_id: str
     db_pool: asyncpg.Pool
@@ -26,7 +26,7 @@ class PipelineState(TypedDict):
     mcp_client_b: ClientSession  # Regulation Lookup MCP
     
     # Intermediate state tracking (Pydantic models converted to dicts for state passing)
-    document_id: str
+    document_ids: list[str]
     applicable_regulations: Optional[list[Dict[str, str]]]
     compliance_decision_id: Optional[str]
     extraction_result: Optional[Dict[str, Any]]
@@ -38,7 +38,8 @@ class PipelineState(TypedDict):
 def evaluate_confidence(state: PipelineState) -> str:
     """Evaluates if extraction or screening confidence is below threshold to trigger human review."""
     extraction_result = state.get("extraction_result", {})
-    if extraction_result.get("extraction_confidence", 1.0) < LOW_CONFIDENCE_THRESHOLD:
+    extraction_confs = extraction_result.get("extraction_confidence", {})
+    if any(conf < LOW_CONFIDENCE_THRESHOLD for conf in extraction_confs.values()):
         return "review_routing"
         
     screening_run = state.get("screening_result", {})

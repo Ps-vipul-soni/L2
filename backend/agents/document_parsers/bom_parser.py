@@ -1,8 +1,9 @@
 import pandas as pd
-import numpy as np
 import os
 from langchain_google_genai import ChatGoogleGenerativeAI
 from backend.schemas.state_schemas import DocumentExtractionResult, ExtractedComponent, ExtractedIngredient
+
+from backend.utils.telemetry import fire_and_forget_log
 
 def extract_number_and_unit(val):
     if pd.isna(val):
@@ -27,7 +28,7 @@ def extract_number_and_unit(val):
         return num, unit
     return None, unit
 
-def parse_bom(document_path: str) -> DocumentExtractionResult:
+async def parse_bom(document_path: str, db_pool=None, workflow_run_id=None) -> DocumentExtractionResult:
     """Parses a CSV or Excel BOM document using Pandas with LLM fallback for ambiguous headers."""
     ext = os.path.splitext(document_path)[1].lower()
     
@@ -46,7 +47,7 @@ def parse_bom(document_path: str) -> DocumentExtractionResult:
     
     # If we can't find the basic ingredient column, fallback to LLM
     if not ingredient_col:
-        return fallback_to_llm(df.to_csv(index=False))
+        return await fallback_to_llm(df.to_csv(index=False), db_pool, workflow_run_id)
         
     components_map = {}
     
@@ -82,11 +83,11 @@ def parse_bom(document_path: str) -> DocumentExtractionResult:
         doc_type="BOM",
         product_name_hint=None,
         components=list(components_map.values()),
-        extraction_confidence=0.9,  # High confidence since it's tabular
+        extraction_confidence={"unknown": 0.9},  # High confidence since it's tabular
         extraction_notes="Deterministically parsed via pandas"
     )
 
-def fallback_to_llm(csv_text: str) -> DocumentExtractionResult:
+async def fallback_to_llm(csv_text: str, db_pool=None, workflow_run_id=None) -> DocumentExtractionResult:
     """Uses Gemini to extract structured info if columns are too ambiguous."""
     try:
         api_key = os.environ.get("GEMINI_API_KEY")
@@ -101,17 +102,21 @@ You are a compliance expert parsing a Bill of Materials (BOM) file in CSV format
 The column headers were too ambiguous for deterministic parsing. 
 Extract the components, ingredients, CAS numbers, and concentrations into the schema.
 Set doc_type exactly to "BOM".
-Set extraction_confidence lower (e.g. 0.6) since headers were ambiguous.
+Objectively score extraction_confidence from 0.0 to 1.0 based strictly on extraction quality, completeness, clarity, and ambiguity. Do not default to any specific number.
+Format extraction_confidence as a dictionary with the key "unknown" (e.g. {{"unknown": 0.85}}).
 
 CSV Text:
 {csv_text}
 """
-        return structured_llm.invoke(prompt)
+        res = await structured_llm.ainvoke(prompt)
+        fire_and_forget_log(db_pool, workflow_run_id, "LLM", "SUCCESS")
+        return res
     except Exception as e:
+        fire_and_forget_log(db_pool, workflow_run_id, "LLM", "FAILED")
         return DocumentExtractionResult(
             doc_type="BOM",
             product_name_hint=None,
             components=[],
-            extraction_confidence=0.0,
+            extraction_confidence={"unknown": 0.0},
             extraction_notes=f"LLM Fallback failed: {type(e).__name__} - {str(e)}"
         )

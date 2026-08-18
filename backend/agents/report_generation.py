@@ -5,6 +5,8 @@ from typing import Dict, Any
 import asyncpg
 from langchain_google_genai import ChatGoogleGenerativeAI
 
+from backend.utils.telemetry import fire_and_forget_log
+
 # Append root path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 from backend.schemas.state_schemas import ComplianceReport
@@ -37,7 +39,12 @@ Screening Data:
 
 Ensure the compliance_decision_id is '{compliance_decision_id}' and workflow_run_id is '{workflow_run_id}'.
 """
-    report_res: ComplianceReport = structured_llm.invoke(prompt)
+    try:
+        report_res: ComplianceReport = await structured_llm.ainvoke(prompt)
+        fire_and_forget_log(db_pool, workflow_run_id, "LLM", "SUCCESS")
+    except Exception as e:
+        fire_and_forget_log(db_pool, workflow_run_id, "LLM", "FAILED")
+        raise RuntimeError(f"Report generation failed: {e}")
     
     # Save the markdown report to disk
     report_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../reports_output'))

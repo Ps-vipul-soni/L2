@@ -68,6 +68,23 @@ CREATE TABLE workflow_runs (
     completed_at    TIMESTAMPTZ
 );
 
+-- ---------- Workflow Run Documents (Many-to-Many traceability) ----------
+CREATE TABLE workflow_run_documents (
+    workflow_run_id UUID NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,
+    document_id     UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    PRIMARY KEY (workflow_run_id, document_id)
+);
+
+CREATE INDEX idx_wrd_document_id ON workflow_run_documents(document_id);
+
+CREATE TABLE tool_call_logs (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    workflow_run_id UUID REFERENCES workflow_runs(id) ON DELETE CASCADE,
+    category TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
 -- ---------- Components (BOM line items within a product) ----------
 CREATE TABLE components (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
