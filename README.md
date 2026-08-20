@@ -1,171 +1,154 @@
-# 🛡️ Agentic Supply Chain Compliance AI
+# Compliance Screening Multi-Agent System
 
-**Intelligent Regulatory Knowledge Assistant** — an autonomous, multi-agent AI pipeline that ingests raw supply chain documents (BOMs, SDS, FMDs), performs complex compliance evaluations (RoHS, REACH, Prop 65), and maps supply chain risk into a queryable graph database.
+## Overview
+This is a robust, multi-agent compliance screening system designed to evaluate product Bills of Materials (BOMs), Safety Data Sheets (SDSs), and Full Material Declarations (FMDs) against international regulatory frameworks (e.g., RoHS, REACH SVHC). 
 
-![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)
-![Streamlit](https://img.shields.io/badge/Streamlit-1.41-FF4B4B.svg)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688.svg)
-![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16.0-336791.svg)
-![Neo4j](https://img.shields.io/badge/Neo4j-5.27-018bff.svg)
-![LangGraph](https://img.shields.io/badge/LangGraph-AI-green.svg)
+Built purely on a relational architecture, the system leverages a **LangGraph-driven orchestrator**, **FastMCP tools**, a **FastAPI backend**, and a **Streamlit frontend**. The pipeline automatically parses documents, normalizes chemical nomenclature, maps applicable regulations, generates screening judgments (with LLM-backed explainability), routes low-confidence evaluations to humans, and synthesizes executive compliance reports.
 
 ---
 
-## 📑 Table of Contents
-- [Overview](#-overview)
-- [Multi-Agent System (LangGraph)](#-multi-agent-system-langgraph)
-- [MCP Servers (Model Context Protocol)](#-mcp-servers-model-context-protocol)
-- [Architecture](#-architecture)
-- [Technology Stack](#-technology-stack)
-- [Quickstart Guide](#-quickstart-guide)
-- [Disclaimer](#-disclaimer)
+## Multi-Agent System
+
+The core pipeline is orchestrated via **LangGraph**. The workflow utilizes specialized agents and tool nodes operating on a shared PostgreSQL database.
+
+### LangGraph Nodes
+1. **`document_understanding`**: Agent node. Parses raw uploaded files (PDF, CSV, XML, XLSX) to extract components, raw ingredient text, concentration values, and calculates per-document extraction confidence.
+2. **`chemical_normalization`**: Tool node (Deterministic). Passes extracted raw chemical names to the Chemical Identity MCP server to normalize against authoritative CAS numbers and canonical names.
+3. **`regulation_planning`**: Agent node. Determines applicable regulations based on product metadata (market country, product type, customer). Falls back to Gemini LLM for fuzzy classification if product types are ambiguous (e.g., classifying "smartwatch" as "electronics").
+4. **`compliance_screening`**: Agent node. Queries the Regulation Lookup MCP server for specific threshold limits. Applies deterministic logic (`ALLOWED`, `THRESHOLD_EXCEEDED`, `EXEMPTION_AVAILABLE`) and batches results to the LLM to generate explainable reasoning strings.
+5. **`review_routing`**: Human-in-the-loop (HITL) Router. Identifies any extraction or screening result with a confidence score `< 0.75`. 
+6. **`risk_and_decision`**: Agent node. Aggregates all screening statuses into a final product-level decision (`PASS`, `FAIL`, `WARNING`, `REVIEW_REQUIRED`), calculates a 0.0–100.0 risk score, and generates a short rationale.
+7. **`report_generation`**: Agent node. Synthesizes a comprehensive markdown executive report (Executive Summary, Violations, Risk Analysis) and writes it to disk.
+
+### Supervisor & Routing Logic
+The graph relies on a conditional edge `evaluate_confidence`. After the `compliance_screening` phase, the state is evaluated:
+- **Low Confidence (Any score < 0.75):** Routes to `review_routing`. The workflow run is marked `PARTIAL`, low-confidence items are pushed into the `review_queue`, and automated execution halts (`__end__`), awaiting human resolution.
+- **High Confidence (All scores ≥ 0.75):** Bypasses the human queue and routes directly to `risk_and_decision` for final scoring.
+
+### Network Resilience (Retry Architecture)
+To ensure high task success rates and stability against rate limits or temporary API timeouts, all LangGraph agent nodes that depend on external network requests (LLM generation or MCP external API calls) are wrapped in a **LangGraph `RetryPolicy`**. The graph automatically retries failed network nodes up to 3 times with an exponential backoff starting at 1.0 seconds.
 
 ---
 
-## 🔎 Overview
+## MCP Servers
+The architecture strictly enforces separation of concerns by wrapping external APIs and database queries into FastMCP servers.
 
-Managing supply chain compliance is traditionally a highly manual, error-prone process. Reviewing Safety Data Sheets (SDS) against hundreds of changing regulations takes hours per document. This project completely automates this process using a **CQRS (Command Query Responsibility Segregation) Architecture**:
-
-- **System of Record (PostgreSQL):** Transactional storage for products, documents, extracted chemical components, screening results, and human-in-the-loop review queues.
-- **Read-Side Analytics (Neo4j):** Deterministic supply chain tracing to identify exactly which Tier-1 suppliers are exposing the product portfolio to restricted chemicals, mapped as a graph.
-
-The evaluation logic is driven by a **LangGraph multi-agent state machine**, which prevents LLM hallucinations through explicit tool-calling via MCP, strict programmatic thresholds, and batched contextual reasoning.
-
----
-
-## 🤖 Multi-Agent System (LangGraph)
-
-- **Document Understanding Agent:** Extracts raw data from supply chain documents (BOMs/FMDs).
-- **Regulation Planning Agent:** Determines which regulations apply to a specific product.
-- **Compliance Screening Agent:** Analyzes ingredients against regulations to determine compliance.
-- **Risk & Decision Agent:** Calculates the overall product compliance status (PASS/FAIL/WARNING).
-- **Review Routing Agent:** Routes low-confidence extractions to a human review queue.
-- **Report Generation Agent:** Drafts an executive compliance summary for stakeholders.
+1. **`ChemicalIdentity`** (Directory: `mcp_servers/chemical_identity_mcp/`)
+   - **Tool**: `resolve_ingredient`
+   - **Role**: Normalizes messy chemical names/synonyms into precise CAS numbers and canonical titles.
+   - **Integration**: Actively calls the external **NIH PubChem PUG REST API** with built-in retry logic and in-memory caching.
+   
+2. **`RegulationLookup`** (Directory: `mcp_servers/regulation_lookup_mcp/`)
+   - **Tool**: `get_thresholds_for_ingredient`
+   - **Role**: Fetches strict numerical thresholds and exemptions for a given CAS number + Regulation Code.
+   - **Integration**: Executes read-only queries against the local **PostgreSQL** database (tables: `regulations`, `ingredients`, `regulation_thresholds`).
 
 ---
 
-## 🔌 MCP Servers (Model Context Protocol)
-
-To eliminate AI hallucinations, agents query external facts via MCP servers:
-
-- **Chemical Identity MCP (Agent A):** Connects to the NIH PubChem API to definitively resolve chemical names to standardized CAS numbers.
-- **Regulation Lookup MCP (Agent B):** Provides deterministic truth on regulatory thresholds (e.g., maximum permitted parts-per-million).
-
----
-
-## 🏗️ Architecture
+## Architecture Diagram
 
 ```mermaid
-graph TD
-    classDef frontend fill:#3b82f6,stroke:#2563eb,stroke-width:2px,color:#fff;
-    classDef api fill:#10b981,stroke:#059669,stroke-width:2px,color:#fff;
-    classDef orchestrator fill:#8b5cf6,stroke:#7c3aed,stroke-width:2px,color:#fff;
-    classDef agent fill:#f59e0b,stroke:#d97706,stroke-width:2px,color:#fff;
-    classDef mcp fill:#ef4444,stroke:#dc2626,stroke-width:2px,color:#fff;
-    classDef database fill:#64748b,stroke:#475569,stroke-width:2px,color:#fff;
-
-    UI[Streamlit Frontend]:::frontend -->|REST API| API[FastAPI Backend]:::api
+flowchart TD
+    Start([__start__]) --> DU[document_understanding]
+    DU --> CN[chemical_normalization]
+    CN --> RP[regulation_planning]
+    RP --> CS[compliance_screening]
+    CS --> Eval{evaluate_confidence}
     
-    API -->|Orchestrates| Graph[LangGraph AI Orchestrator]:::orchestrator
-    API -->|Reads/Writes| Postgres[(PostgreSQL)]:::database
+    Eval -- "confidence < 0.75" --> RR[review_routing]
+    RR --> End1([__end__\nStatus: PARTIAL / Queued for Review])
     
-    subgraph Agents [LangGraph State Machine]
-        DocExt[Doc Extractor]:::agent
-        RegPlan[Reg Planner]:::agent
-        CompScreen[Comp Screener]:::agent
-        RiskDec[Risk & Decision]:::agent
-        RevQueue[Review Queue]:::agent
-        
-        DocExt --> RegPlan --> CompScreen --> RiskDec
-        DocExt -.->|Low Confidence| RevQueue
-    end
+    Eval -- "confidence >= 0.75" --> RD[risk_and_decision]
+    RD --> RG[report_generation]
+    RG --> End2([__end__\nStatus: COMPLETED])
     
-    Graph --> Agents
-    
+    %% MCP Server Interactions
     subgraph MCP Servers
-        AgentA[Chemical Identity MCP]:::mcp
-        AgentB[Regulation Lookup MCP]:::mcp
+        ChemIdentity[ChemicalIdentity MCP\nPubChem API]
+        RegLookup[RegulationLookup MCP\nPostgreSQL DB]
     end
     
-    DocExt -->|Resolve CAS via PubChem| AgentA
-    CompScreen -->|Query Rules| AgentB
-    
-    Agents -->|Dual Write| Postgres
-    Agents -->|Graph Map| Neo4j[(Neo4j AuraDB)]:::database
+    CN -.- ChemIdentity
+    CS -.- RegLookup
 ```
 
 ---
 
-## 💻 Technology Stack
+## Technology Stack
 
-| Layer | Technology | Purpose |
-|---|---|---|
-| **Frontend** | Streamlit | 8-Page Interactive Web Application |
-| **Backend API** | FastAPI | High-performance REST API |
-| **AI Orchestration** | LangGraph | State Machine & Agent Routing |
-| **LLMs** | Google Gemini 3.1 Flash | Extraction & Explanability Reasoning |
-| **External Tooling** | MCP (Model Context Protocol) | External Data Tooling Interfaces |
-| **Transactional DB** | PostgreSQL + asyncpg | Core relational system of record |
-| **Graph Database** | Neo4j AuraDB | Supply chain impact and hierarchy |
+The project operates entirely on a local/bare-metal environment (No Docker containerization is required or provided).
+
+- **LLM Engine**: Google Gemini (`gemini-3.1-flash-lite` via `langchain-google-genai` wrapper, running at `temperature=0.0` for deterministic outputs).
+- **Agent Orchestration**: `langgraph`
+- **Tool Servers**: `mcp` (FastMCP)
+- **Database**: PostgreSQL (v16+) via the `asyncpg` async driver. (Note: Neo4j is *not* implemented or present in the execution path).
+- **Backend Framework**: `fastapi` & `uvicorn`
+- **Frontend Framework**: `streamlit` (>= 1.41.0)
+- **Document Parsing**: `pymupdf` (PDF), `pandas` + `openpyxl` (CSV/Excel), `lxml` (XML)
 
 ---
 
-## 🚀 Quickstart Guide
+## Evaluation Metrics
+
+System performance is tracked via the Settings page (`frontend/pages/8_Settings.py`). The metrics dynamically calculate statistics based on the Postgres database, handling empty states gracefully:
+
+1. **Task Success Rate**: Calculates the percentage of `COMPLETED` runs against all eligible runs (`COMPLETED`, `FAILED`, `PARTIAL`). 
+   - *Empty State*: Displays a warning banner `"Insufficient or no eligible data in this time window"` and hides the metric cards if no runs exist.
+2. **Reliability / Run Consistency**: Actively runs parallel evaluations on a separate `compliance_screening_test` DB to calculate Jaccard overlap consistency (Data & Decision consistency).
+   - *Empty State*: Shows `"No reliability evaluations have been run yet."` banner until the user triggers a run.
+3. **Graceful Failure Handling Rate**: Calculates the percentage of total failures that were safely caught by the human-in-the-loop node (`PARTIAL` status) vs absolute crashes (`FAILED` status).
+   - *Empty State*: Shows `"Insufficient data / No non-recoverable failures in this time window."`
+4. **Tool Call Success Rate**: Calculates success percentage of internal MCP and LLM tool calls by querying `tool_call_logs`.
+   - *Empty State*: Metric cards safely render `"N/A"` to prevent division-by-zero errors.
+5. **Recovery Rate**: Calculates the percentage of human-reviewed items in the `review_queue` that have been successfully mapped to `RESOLVED` vs the total number of items ever routed to the queue.
+   - *Empty State*: Displays `"Insufficient data / No recoverable failures in this time window."`
+
+---
+
+## Quickstart Guide
+
+The following steps assume you are running a bash-compatible terminal (Git Bash, Linux, or macOS).
 
 ### 1. Prerequisites
 - Python 3.11+
-- A running PostgreSQL instance (v16+)
-- A Neo4j AuraDB Free Instance
-- A Google Gemini API key
+- PostgreSQL 16+ running locally
+- Google Gemini API Key
 
-### 2. Clone the Repository
+### 2. Environment Setup
 ```bash
-git clone <your-repository-url>
-cd <repository-directory>
+cp .env.example .env
+```
+Edit `.env` and add your `GEMINI_API_KEY`. (Ensure `DATABASE_URL` matches your local Postgres credentials).
+
+### 3. Database Initialization
+Run the provided shell script to drop, recreate, schema-migrate, and seed the local database:
+```bash
+chmod +x database/reset_db.sh
+./database/reset_db.sh
 ```
 
-### 3. Configure Environment Variables
-Create a `.env` file in the root of the project with your actual credentials:
-```bash
-GEMINI_API_KEY=your_google_gemini_key_here
-DATABASE_URL=postgresql://user:password@localhost:5432/dbname
-NEO4J_URI=neo4j+s://your-instance.databases.neo4j.io
-NEO4J_USERNAME=neo4j
-NEO4J_PASSWORD=your_neo4j_password_here
-```
-
-### 4. Start the Backend API
-Open a terminal in the project root:
+### 4. Launch Backend API
+In Terminal 1:
 ```bash
 cd backend
 python -m venv .venv
-
-# Windows
-.\.venv\Scripts\activate
-# macOS/Linux
-source .venv/bin/activate
-
+source .venv/bin/activate  # (Windows: .\.venv\Scripts\Activate.ps1)
 pip install -r requirements.txt
 uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-### 5. Start the Frontend UI
-Open a **second terminal** in the project root:
+### 5. Launch Frontend UI
+In Terminal 2:
 ```bash
 cd frontend
 python -m venv .venv
-
-# Windows
-.\.venv\Scripts\activate
-# macOS/Linux
-source .venv/bin/activate
-
+source .venv/bin/activate  # (Windows: .\.venv\Scripts\Activate.ps1)
 pip install -r requirements.txt
-streamlit run frontend/1_Dashboard.py
+streamlit run streamlit_app.py
 ```
-The UI opens automatically at `http://localhost:8501`.
+Access the application at `http://localhost:8501`.
 
 ---
 
-## ⚠️ Disclaimer
-This is a technical demonstration of Agentic AI architectures. It is **not** a substitute for certified legal or environmental compliance testing. Always consult qualified compliance officers before deploying products into restricted supply chains.
+## Disclaimer
+This software is a multi-agent assistance prototype designed to accelerate supply chain document review and flag potential regulatory threshold violations. **It is not a certified legal, regulatory, or metallurgical authority.** All automated compliance judgments (especially those involving exemptions, fuzzy product matching, or LLM-based reasoning) must be reviewed by qualified human compliance officers before being used in formal supply chain audits or customs declarations.
